@@ -1,77 +1,46 @@
-from api.prompt import Prompt
-import os
-from openai import OpenAI
-import pyimgur
+from flask import Flask, request, jsonify
+import requests
 
-client = OpenAI()
+app = Flask(__name__)
 
-client.api_key = os.getenv("OPENAI_API_KEY")
+# Groq API 配置
+GROQ_API_KEY = "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"
+GROQ_MODEL = "llama-3.1-70b"
 
-class ChatGPT:
-    """
-    A class for generating responses using OpenAI's GPT model.
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    data = request.json
+    user_message = data['events'][0]['message']['text']
 
-    Attributes:
-    - prompt: an instance of the Prompt class for generating prompts
-    - model: a string representing the name of the OpenAI model to use
-    - temperature: a float representing the "creativity" of the responses generated
-    - max_tokens: an integer representing the maximum number of tokens to generate in a response
-    """
+    # 調用 Groq LLM
+    response = requests.post(
+        'https://api.groq.com/v1/chat/completions',
+        headers={'Authorization': f'Bearer {GROQ_API_KEY}'},
+        json={
+            'model': GROQ_MODEL,
+            'messages': [{'role': 'user', 'content': user_message}]
+        }
+    )
 
-    def __init__(self):
-        self.prompt = Prompt()
-        self.model = os.getenv("OPENAI_MODEL", default="gpt-4o-mini")
-        self.temperature = float(os.getenv("OPENAI_TEMPERATURE", default=0))
-        self.max_tokens = int(os.getenv("OPENAI_MAX_TOKENS", default=600))
+    llm_response = response.json()
+    reply_message = llm_response['choices'][0]['message']['content']
 
-    def get_response(self):
-        """
-        Generates a response using OpenAI's GPT model.
+    # 回覆 LINE 用戶
+    reply_token = data['events'][0]['replyToken']
+    reply_to_line(reply_token, reply_message)
 
-        Returns:
-        - A string representing the generated response.
-        """
-        response = client.chat.completions.create(
-            model=self.model,
-            messages=self.prompt.generate_prompt(),
-        )
-        return response.choices[0].message.content
+    return jsonify({'status': 'success'})
 
-    def add_msg(self, text):
-        """
-        Adds a message to the prompt for generating a response.
+def reply_to_line(reply_token, message):
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {LINE_CHANNEL_ACCESS_TOKEN}'
+    }
+    payload = {
+        'replyToken': reply_token,
+        'messages': [{'type': 'text', 'text': message}]
+    }
+    requests.post('https://api.line.me/v2/bot/message/reply', headers=headers, json=payload)
 
-        Parameters:
-        - text: a string representing the message to add to the prompt.
-        """
-        self.prompt.add_msg(text)
-
-    def process_image_link(self, image_url):
-        """
-        Processes an image using OpenAI's image recognition capabilities.
-
-        Parameters:
-        - image_url: the URL of the image to be processed.
-
-        Returns:
-        - A dictionary representing the result of the image processing.
-        """
-        response = client.Completion.create(
-            engine="davinci",
-            prompt=f"Analyze the text in this image: {image_url}",
-            max_tokens=100
-        )
-        return response
-
-    def get_user_image(self, image_content):
-        path = './static/temp.png'
-        with open(path, 'wb') as fd:
-            for chunk in image_content.iter_content():
-                fd.write(chunk)
-        return path
-
-    def upload_img_link(self, imgpath):
-        IMGUR_CLIENT_ID = os.getenv("IMGUR_CLIENT_ID")
-        im = pyimgur.Imgur(IMGUR_CLIENT_ID)
-        uploaded_image = im.upload_image(imgpath, title="Uploaded with PyImgur")
-        return uploaded_image.link
+if __name__ == '__main__':
+    app.run()
